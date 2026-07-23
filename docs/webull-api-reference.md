@@ -38,6 +38,14 @@ Fetched: 2026-07-20
   NOT Weinstein/Mansfield relative strength. Do not confuse these.
 - Webull's Script Editor is a Pine-Script-inspired proprietary
   language, NOT Pine Script. Not portable. No VS Code/Cursor plugin.
-  Whether it supports cross-symbol references is unverified.
 - Use the official Market Data API and Trading API only. Do not use
   unofficial/reverse-engineered packages.
+
+## Script Editor cross-symbol references (2026-07-20)
+- CONFIRMED: Webull's Script Editor (metrix framework) does NOT
+  support fetching a second symbol's price data within a
+  CustomIndicator. Cross-symbol references are not available.
+  I can't build Mansfield RS, or any relative-strength-vs-index
+  indicator, natively in Webull. This path is closed, not just
+  unverified. Confirmed directly by Vega AI (Webull's script
+  assistant), not inferred.

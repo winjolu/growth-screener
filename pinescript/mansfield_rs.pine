@@ -1,0 +1,33 @@
+//@version=6
+
+// Mansfield Relative Strength, for my weekly stage-analysis screener.
+// I calculate this the way Weinstein/Mansfield define it: take the
+// stock's price relative to a market index (RS_ratio), then compare
+// today's ratio against its own moving average and express the gap
+// as a percentage. Above zero means the stock is outperforming the
+// index over the lookback window; below zero means it's lagging.
+// Default lookback is 52, matching a weekly chart's ~1-year window.
+indicator(title="Mansfield Relative Strength", shorttitle="MRS", overlay=false)
+
+periodInput = input.int(52, title="SMA Period", minval=2)
+indexSymbolInput = input.symbol("SPX", title="Comparison Index")
+
+// I pull the index's close on the same timeframe as the chart this is
+// plotted on, so it works whether I'm looking at daily or weekly bars.
+indexClose = request.security(indexSymbolInput, timeframe.period, close)
+
+// RS_ratio is the raw Weinstein relative-strength figure: stock price
+// divided by index price. MRS then normalizes it against its own SMA
+// so the line oscillates around zero instead of drifting with price.
+rsRatio = close / indexClose
+smaRS = ta.sma(rsRatio, periodInput)
+
+// I don't have a full SMA window yet on the first (periodInput - 1)
+// bars, so I plot na there instead of an incorrect partial value.
+mrs = bar_index >= periodInput - 1 ? 100 * ((rsRatio / smaRS) - 1) : na
+
+plot(mrs, title="Mansfield RS", color=color.blue, style=plot.style_line, linewidth=2)
+
+// Single zero reference line only. Above zero is long-term positive,
+// below zero is long-term negative, per Mansfield's own reading of it.
+hline(0, title="Zero Line", color=color.gray, linestyle=hline.style_dashed)
