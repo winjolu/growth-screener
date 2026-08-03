@@ -9,3 +9,4 @@ reference/
 conf/
 *.log*
 the project instructions
+config/portfolio.json
