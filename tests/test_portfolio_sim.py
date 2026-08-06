@@ -176,6 +176,45 @@ class ReportTest(unittest.TestCase):
         self.assertIn("BEATS", text)
         self.assertNotIn("LOSES TO", text)
 
+    def test_the_report_never_calls_a_benchmark_SPY_on_its_own_authority(self):
+        """This is the defect, not a style point. The report printed the
+        word SPY over whatever bars it was handed, so a growth strategy
+        measured against VUG would have been written up as beating SPY.
+        A benchmark says its own name or it says 'the index'."""
+        trades = [_trade("2024-01-05", "2025-01-03", 80.0)]
+        vug = portfolio_sim.benchmark_buy_and_hold(
+            [{"date": "2024-01-05", "close": 100.0},
+             {"date": "2025-01-03", "close": 130.0}],
+            "2024-01-01", "2025-12-31", name="VUG")
+        self.assertEqual(vug["name"], "VUG")
+        text = portfolio_sim.format_report(trades, benchmark=vug)
+        self.assertIn("VUG", text)
+        self.assertNotIn("SPY", text)
+
+    def test_an_unnamed_benchmark_is_not_given_a_name(self):
+        trades = [_trade("2024-01-05", "2025-01-03", 80.0)]
+        bm = {"total_return_pct": 10.0, "cagr_pct": 10.0, "years": 1.0,
+              "start": "2024-01-05", "end": "2025-01-03"}
+        text = portfolio_sim.format_report(trades, benchmark=bm)
+        self.assertIn("the index", text)
+        self.assertNotIn("SPY", text)
+
+    def test_the_reference_benchmark_is_reported_but_never_judged_against(self):
+        """SPY goes beside the real benchmark, never instead of it. The
+        verdict has to be against the closest cheap fund, or a growth
+        strategy in a growth decade reads as a triumph."""
+        trades = [_trade("2024-01-05", "2025-01-03", 20.0)]
+        vug = {"name": "VUG", "total_return_pct": 40.0, "cagr_pct": 40.0,
+               "years": 1.0, "start": "2024-01-05", "end": "2025-01-03"}
+        spy = {"name": "SPY", "total_return_pct": 10.0, "cagr_pct": 10.0,
+               "years": 1.0, "start": "2024-01-05", "end": "2025-01-03"}
+        text = portfolio_sim.format_report(trades, benchmark=vug, reference=spy)
+        self.assertIn("SPY", text)
+        self.assertIn("VUG", text)
+        # Beat SPY, lost to VUG. The verdict must follow VUG.
+        self.assertIn("LOSES TO", text)
+        self.assertIn("holding VUG", text)
+
 
 if __name__ == "__main__":
     unittest.main()

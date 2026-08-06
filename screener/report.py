@@ -391,7 +391,8 @@ def compare_arms(pattern, capital=100000.0, cash_yield_pct=0.0, seeds=3):
               f"{row['mean_pct']:>+8.2f}%{row['worst_pct']:>+8.1f}%"
               f"{row['cagr_pct']:>+9.2f}%{row['drawdown_pct']:>10.1f}%")
     if benchmark:
-        print(f"{'buy and hold SPY':<34}{'':>8}{'':>7}{'':>9}{'':>9}"
+        bench_name = portfolio_sim._benchmark_name(benchmark)
+        print(f"{'buy and hold ' + bench_name:<34}{'':>8}{'':>7}{'':>9}{'':>9}"
               f"{benchmark['cagr_pct']:>+9.2f}%")
     return rows
 

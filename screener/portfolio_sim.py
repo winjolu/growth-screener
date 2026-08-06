@@ -766,10 +766,16 @@ def roi_uncertainty(trades, sample_size=100, draws=2000, stake=1000.0, seed=2026
     }
 
 
-def benchmark_buy_and_hold(index_bars, start, end):
+def benchmark_buy_and_hold(index_bars, start, end, name=None):
     """What simply buying the index and doing nothing would have returned
     over the same window — the number the strategy has to beat to justify
-    existing."""
+    existing.
+
+    `name` is the ticker being held. It defaults to None rather than to
+    "SPY", because the report used to print the word SPY over whatever
+    it had actually been given, and a growth strategy benchmarked against
+    VUG while the output says SPY is precisely the kind of confident,
+    plausible, wrong number this file exists to prevent."""
     inside = [b for b in index_bars if start <= b["date"][:10] <= end]
     if len(inside) < 2:
         return None
@@ -777,6 +783,7 @@ def benchmark_buy_and_hold(index_bars, start, end):
     years = max((_date(inside[-1]["date"]) - _date(inside[0]["date"])).days / 365.25, 1e-9)
     total = (last / first - 1) * 100
     return {
+        "name": name,
         "start": inside[0]["date"][:10],
         "end": inside[-1]["date"][:10],
         "total_return_pct": total,
@@ -785,9 +792,24 @@ def benchmark_buy_and_hold(index_bars, start, end):
     }
 
 
-def format_report(trades, benchmark=None, stake=1000.0, label=""):
+def _benchmark_name(benchmark):
+    """What to call a benchmark in the output. An unnamed one is reported
+    as unnamed — I would rather read "the index" than a ticker nobody
+    verified."""
+    return (benchmark or {}).get("name") or "the index"
+
+
+def format_report(trades, benchmark=None, stake=1000.0, label="", reference=None):
     """A report meant to be read by someone who doesn't already know the
-    vocabulary, so each figure says what it means."""
+    vocabulary, so each figure says what it means.
+
+    `benchmark` is the closest cheap fund the strategy has to beat — VUG
+    for large-cap growth, IWF further back than 2004, IWO if the picks
+    skew small. `reference` is a second benchmark printed beside it and
+    never used for the verdict; I pass SPY there so the comparison is
+    never only against the flattering one. Reporting SPY alone is how
+    the previous project went two days without noticing MTUM had beaten
+    it for five years."""
     per_trade = summarise_trades(trades, stake)
     account = simulate_account(trades, stake)
     compounded = simulate_compounded(trades, stake)
@@ -871,18 +893,28 @@ def format_report(trades, benchmark=None, stake=1000.0, label=""):
             add(f"  here from luck — regardless of what the average says.")
 
     if benchmark:
-        add(f"\n-- Against simply buying the index -------------------------------")
-        add(f"  SPY over the same window: {benchmark['total_return_pct']:+.1f}% total, "
+        name = _benchmark_name(benchmark)
+        add(f"\n-- Against simply buying {name} " + "-" * max(1, 40 - len(name)))
+        add(f"  {name} over the same window: {benchmark['total_return_pct']:+.1f}% total, "
             f"{benchmark['cagr_pct']:+.1f}% a year.")
+        if reference:
+            ref_name = _benchmark_name(reference)
+            add(f"  {ref_name} over the same window: "
+                f"{reference['total_return_pct']:+.1f}% total, "
+                f"{reference['cagr_pct']:+.1f}% a year.")
+            add(f"  (Shown so the comparison is never only against the")
+            add(f"  flattering benchmark. The verdict below is against {name}.)")
         lo, hi = account["cagr_pct"], max(account["cagr_on_average_pct"],
                                           compounded["cagr_pct"])
         verdict = "BEATS" if lo > benchmark["cagr_pct"] else (
             "STRADDLES" if hi > benchmark["cagr_pct"] else "LOSES TO")
         add(f"  The strategy earned between {lo:+.1f}% and {hi:+.1f}% a year "
             f"depending on")
-        add(f"  how the capital is counted, so it {verdict} buy-and-hold.")
+        add(f"  how the capital is counted, so it {verdict} holding {name}.")
         if hi <= benchmark["cagr_pct"]:
             add(f"  A positive return is not the same as a good one. Doing nothing")
             add(f"  would have earned more with no work and no risk of being wrong.")
+        if reference and hi <= reference["cagr_pct"] < benchmark["cagr_pct"]:
+            add(f"  It also trails {ref_name}, which is the easier comparison.")
 
     return "\n".join(out)
