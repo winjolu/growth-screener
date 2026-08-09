@@ -1,6 +1,6 @@
 """The once-a-day check: what to do about what I already hold.
 
-Built to the shape I described — stops adjusted on weekdays,
+Built to the shape I need — stops adjusted on weekdays,
 purchases considered at the weekend once the weekly bar has closed.
 That split is not a compromise, it follows from what the two decisions
 depend on. A stop is a price event and can trigger any day. An entry is

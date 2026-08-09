@@ -27,7 +27,9 @@ import pickle
 import statistics
 import unittest
 
-SHARADAR_CACHE = "~/market-data/cache/weekly_sharadar.pkl"
+SHARADAR_CACHE = os.environ.get(
+    "SHARADAR_WEEKLY_CACHE",
+    os.path.expanduser("~/market-data/cache/weekly_sharadar.pkl"))
 
 # Webull's known-bad share is about 5% of tickers. A sample where more
 # than 15% disagree means something new has broken, not that we have

@@ -8,5 +8,4 @@ __pycache__/
 reference/
 conf/
 *.log*
-the project instructions
 config/portfolio.json

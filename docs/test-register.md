@@ -246,7 +246,7 @@ components tested individually and then in combination does not fit in
 Two things deliberately held back:
 
 - **`MA_PERIOD = 30`** (`screener/conditions.py:201`) is an untested
-  inherited constant, and the closing warning I carried across. It should
+  inherited constant and the closing warning I inherited. It should
   be swept — but not before there is a growth signal worth sweeping it
   around, or I spend budget on the wrong axis.
 - **Re-entry after a stop-out.** The most interesting unexplained result
