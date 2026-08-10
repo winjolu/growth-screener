@@ -24,7 +24,7 @@ me, no matter how honestly I write down the hypothesis beforehand.
 ## Why not 2005-2009
 
 That was the previous project's holdout and it is burned. Its results
-have been read, written up, and written up, and I carried the conclusions across.
+have been read and written up, and I carried the conclusions across.
 Inheriting it would mean starting this project having already peeked.
 It sits inside the development window here, which is fine — development
 data is allowed to be dirty.
