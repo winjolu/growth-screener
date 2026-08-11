@@ -248,3 +248,118 @@ class RefreshTest(_Stubbed):
         self.stub([[]])
         sharadar.refresh("prices", db_path=path)
         self.assertEqual(self.calls[0][0], "stocks")
+
+    def test_fundamentals_refresh_keys_on_the_filing_date(self):
+        """calendardate skips slow filers entirely.
+
+        A company filing Q1 six months late has an old calendardate and a
+        new datekey. Asking for calendardate greater than the newest
+        stored never reaches it, and that is 2.28% of rows — the slow
+        filers specifically, which is not a random sample.
+        """
+        self.assertEqual(sharadar.DATE_COLUMN["fundamentals"], "datekey")
+
+
+class EntitlementWindowTest(_Stubbed):
+    """What happens when the subscription window is shallower than the gap.
+
+    A short entitlement serves only its own window. Fall further behind
+    than that window is deep and the oldest row on offer sits past the
+    gap — so an append writes a permanent hole and reports success.
+    """
+
+    def _db(self):
+        import sqlite3, tempfile, os
+        fd, path = tempfile.mkstemp(suffix=".db"); os.close(fd)
+        conn = sqlite3.connect(path)
+        conn.execute("CREATE TABLE prices (ticker TEXT, date TEXT, close REAL)")
+        conn.executemany("INSERT INTO prices VALUES (?,?,?)",
+                         [("AAPL", "2020-01-02", 100.0), ("AAPL", "2020-01-03", 101.0)])
+        conn.commit(); conn.close()
+        self.addCleanup(os.remove, path)
+        return path
+
+    def test_a_gap_beyond_the_window_raises_rather_than_holing_the_history(self):
+        path = self._db()
+        # Stored to 2020-01-03; the window now only reaches back to 2026.
+        self.stub([[{"ticker": "AAPL", "date": "2026-08-05", "close": "102.0"}]])
+        with self.assertRaises(sharadar.HistoryGap):
+            sharadar.refresh("prices", db_path=path)
+
+    def test_nothing_is_written_when_the_gap_is_refused(self):
+        import sqlite3
+        path = self._db()
+        self.stub([[{"ticker": "AAPL", "date": "2026-08-05", "close": "102.0"}]])
+        with self.assertRaises(sharadar.HistoryGap):
+            sharadar.refresh("prices", db_path=path)
+        conn = sqlite3.connect(path)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM prices").fetchone()[0], 2,
+                         "the refusal must not have inserted anything")
+        conn.close()
+
+    def test_an_ordinary_daily_gap_is_not_treated_as_a_hole(self):
+        path = self._db()
+        self.stub([[{"ticker": "AAPL", "date": "2020-01-06", "close": "102.0"}]])
+        self.assertEqual(sharadar.refresh("prices", db_path=path), 1)
+
+    def test_a_gap_can_be_accepted_deliberately(self):
+        path = self._db()
+        self.stub([[{"ticker": "AAPL", "date": "2026-08-05", "close": "102.0"}]])
+        self.assertEqual(
+            sharadar.refresh("prices", db_path=path, allow_gap=True), 1)
+
+
+class ArchivalHistoryTest(_Stubbed):
+    """Full-depth history is archival once the entitlement shortens.
+
+    The watermark lives in the database, not in this module, because both
+    projects open the same file. A module constant would protect only
+    whichever project happened to be running.
+    """
+
+    def _db(self):
+        import sqlite3, tempfile, os
+        fd, path = tempfile.mkstemp(suffix=".db"); os.close(fd)
+        conn = sqlite3.connect(path)
+        conn.execute("CREATE TABLE prices (ticker TEXT, date TEXT, close REAL)")
+        conn.executemany("INSERT INTO prices VALUES (?,?,?)",
+                         [("AAPL", "1998-01-05", 1.0), ("AAPL", "2010-01-05", 2.0),
+                          ("AAPL", "2026-08-04", 3.0)])
+        conn.commit(); conn.close()
+        self.addCleanup(os.remove, path)
+        return path
+
+    def test_freezing_counts_what_it_is_protecting(self):
+        path = self._db()
+        held = sharadar.freeze_history("prices", "2025-08-10", db_path=path)
+        self.assertEqual(held, 2)
+        self.assertEqual(sharadar.frozen_before("prices", db_path=path), "2025-08-10")
+
+    def test_an_unfrozen_table_permits_anything(self):
+        path = self._db()
+        sharadar.assert_writable("prices", "1998-01-01", db_path=path)
+
+    def test_reaching_below_the_watermark_raises(self):
+        path = self._db()
+        sharadar.freeze_history("prices", "2025-08-10", db_path=path)
+        with self.assertRaises(sharadar.ArchivalWrite):
+            sharadar.assert_writable("prices", "1998-01-01", db_path=path)
+
+    def test_appending_above_the_watermark_is_allowed(self):
+        path = self._db()
+        sharadar.freeze_history("prices", "2025-08-10", db_path=path)
+        sharadar.assert_writable("prices", "2026-08-05", db_path=path)
+
+    def test_the_watermark_survives_in_the_file_for_the_other_project(self):
+        # The point of storing it rather than hardcoding it: a second
+        # process opening the same database sees the same protection.
+        path = self._db()
+        sharadar.freeze_history("prices", "2025-08-10", note="full-depth load",
+                                db_path=path)
+        import sqlite3
+        conn = sqlite3.connect(path)
+        row = conn.execute(
+            "SELECT frozen_before, note FROM data_coverage WHERE table_name='prices'"
+        ).fetchone()
+        conn.close()
+        self.assertEqual(row, ("2025-08-10", "full-depth load"))

@@ -197,12 +197,107 @@ DATE_COLUMN = {
     "prices": "date",
     "fundprices": "date",
     "dailyfundamentals": "date",
-    "fundamentals": "calendardate",
+    # datekey, not calendardate. A company filing its Q1 six months late
+    # carries an old calendardate and a new datekey, so asking for
+    # calendardate greater than the newest stored skips it entirely —
+    # and slow filers are 2.28% of rows. Keying on datekey also matches
+    # the column every point-in-time read already has to use.
+    "fundamentals": "datekey",
     "actions": "date",
     "events": "date",
     "insiders": "filingdate",
     "sp500": "date",
 }
+
+# History held from a full-depth bulk load is archival. A shorter
+# entitlement changes what I am able to download; it does not change what
+# I already hold, and nothing should treat the two as the same thing.
+#
+# The watermark lives in the database rather than in this module because
+# both projects point at the same file. A constant here would protect
+# only whichever project happened to be running.
+COVERAGE_TABLE = "data_coverage"
+
+# How far the first returned row may sit beyond what is already stored
+# before the gap is treated as a hole rather than a quiet spell.
+MAX_REFRESH_GAP_DAYS = 30
+
+
+class HistoryGap(RuntimeError):
+    """A refresh would leave a hole it can never fill.
+
+    Raised when the earliest row the API returns starts well after the
+    newest row already stored. On a full-depth entitlement this means the
+    vendor is missing data. On a short one it means the gap has outrun
+    the window, and inserting anyway writes a permanent hole into the
+    middle of the history while reporting success.
+    """
+
+
+class ArchivalWrite(RuntimeError):
+    """An operation would destroy history that cannot be re-downloaded."""
+
+
+def _ensure_coverage(conn):
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS {COVERAGE_TABLE} (
+        table_name    TEXT PRIMARY KEY,
+        frozen_before TEXT NOT NULL,
+        rows_at_freeze INTEGER,
+        note          TEXT)""")
+
+
+def freeze_history(table, before, note=None, db_path=None):
+    """Mark everything in `table` dated before `before` as archival.
+
+    Call this once, while the full-depth entitlement is still active.
+    After that, assert_writable refuses any operation reaching below the
+    watermark, whichever project attempts it.
+    """
+    import sqlite3
+    conn = sqlite3.connect(db_path or DB_PATH)
+    try:
+        _ensure_coverage(conn)
+        column = DATE_COLUMN.get(table)
+        if not column:
+            raise ValueError(f"no date column known for {table!r}")
+        held = conn.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE {column} < ?", (before,)).fetchone()[0]
+        conn.execute(
+            f"INSERT OR REPLACE INTO {COVERAGE_TABLE} VALUES (?,?,?,?)",
+            (table, before, held, note))
+        conn.commit()
+    finally:
+        conn.close()
+    return held
+
+
+def frozen_before(table, db_path=None):
+    """The archival watermark for `table`, or None if never frozen."""
+    import sqlite3
+    conn = sqlite3.connect(db_path or DB_PATH)
+    try:
+        _ensure_coverage(conn)
+        row = conn.execute(
+            f"SELECT frozen_before FROM {COVERAGE_TABLE} WHERE table_name = ?",
+            (table,)).fetchone()
+    finally:
+        conn.close()
+    return row[0] if row else None
+
+
+def assert_writable(table, earliest_affected, db_path=None):
+    """Raise unless an operation confined to `earliest_affected` onwards is safe.
+
+    Every destructive path — a bulk rebuild, a DROP, a reload — should
+    call this first. Appending later rows is always allowed; reaching
+    below the watermark is not.
+    """
+    mark = frozen_before(table, db_path=db_path)
+    if mark and earliest_affected < mark:
+        raise ArchivalWrite(
+            f"{table}: rows before {mark} came from a full-depth load and "
+            f"cannot be re-downloaded, but this would touch {earliest_affected}. "
+            f"Append instead, or clear the watermark deliberately.")
 
 # Local table name -> the API table it comes from, where they differ.
 API_TABLE = {"prices": "stocks", "fundprices": "funds",
@@ -223,8 +318,17 @@ def latest_local_date(table, db_path=None):
     return row[0] if row and row[0] else None
 
 
-def refresh(table, db_path=None, since=None, dry_run=False):
-    """Append rows dated after what we already hold.
+def _days_between(earlier, later):
+    """Calendar days from `earlier` to `later`, 0 if the order is reversed."""
+    import datetime
+    a = datetime.date.fromisoformat(earlier[:10])
+    b = datetime.date.fromisoformat(later[:10])
+    return max((b - a).days, 0)
+
+
+def refresh(table, db_path=None, since=None, dry_run=False,
+            allow_gap=False, max_gap_days=MAX_REFRESH_GAP_DAYS):
+    """Append rows dated after what is already held.
 
     Returns the number of rows inserted. Safe to run repeatedly: it asks
     only for dates strictly after the newest stored, so a second run in
@@ -247,6 +351,20 @@ def refresh(table, db_path=None, since=None, dry_run=False):
     rows = fetch(API_TABLE.get(table, table), **{f"{column}.gt": start})
     if dry_run or not rows:
         return len(rows)
+
+    # A short entitlement serves only its own window. Once the local data
+    # falls further behind than that window is deep, the API's oldest
+    # available row sits past the gap, and appending it writes a hole
+    # into the middle of the history while returning a healthy row count.
+    # The hole is unfillable later, because by then the window has moved
+    # on again.
+    earliest = min(r[column] for r in rows if r.get(column))
+    if not allow_gap and _days_between(start, earliest) > max_gap_days:
+        raise HistoryGap(
+            f"{table}: newest stored is {start} but the earliest row offered "
+            f"is {earliest}. Inserting would leave an unfillable gap. Either "
+            f"the entitlement window no longer reaches back to {start}, or "
+            f"the vendor is missing data. Pass allow_gap=True to accept it.")
 
     conn = sqlite3.connect(db_path or DB_PATH)
     try:
