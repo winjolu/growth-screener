@@ -335,9 +335,22 @@ class ArchivalHistoryTest(_Stubbed):
         self.assertEqual(held, 2)
         self.assertEqual(sharadar.frozen_before("prices", db_path=path), "2025-08-10")
 
-    def test_an_unfrozen_table_permits_anything(self):
+    def test_a_missing_watermark_refuses_rather_than_permits(self):
+        """The failure that mattered: this guard sat over an archival
+        database permitting every rebuild, because the coverage table had
+        never been created and an empty lookup read as "nothing to
+        protect". It looked installed. A guard that cannot find its
+        evidence has failed, and a failed guard must not read as a pass.
+        """
         path = self._db()
-        sharadar.assert_writable("prices", "1998-01-01", db_path=path)
+        with self.assertRaises(sharadar.ArchivalWrite):
+            sharadar.assert_writable("prices", "1998-01-01", db_path=path)
+
+    def test_a_genuine_first_load_can_say_so_explicitly(self):
+        # The one legitimate unfrozen case, and it has to be asked for.
+        path = self._db()
+        sharadar.assert_writable("prices", "1998-01-01", db_path=path,
+                                 unfrozen_ok=True)
 
     def test_reaching_below_the_watermark_raises(self):
         path = self._db()
