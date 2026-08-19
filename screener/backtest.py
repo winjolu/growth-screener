@@ -590,9 +590,12 @@ def run_backtest(tickers, start_date, end_date, check_interval_weeks=4, paramete
             trade["conditions_met"] = result["conditions_met"]
             trade["parameter_set"] = parameter_set
             trades.append(trade)
-            db.insert_backtest_trade(trade)
-
             in_trade_until = trade["exit_date"] or end_date
+
+    # One transaction for the whole arm. Committing per trade cost a
+    # full fsync each time, and left a half-finished arm indistinguishable
+    # from a complete one if the run died partway.
+    db.insert_backtest_trades(trades)
 
     if skipped:
         # Said out loud on purpose. A name missing from the cache
@@ -826,8 +829,9 @@ def run_short_backtest(tickers, start_date, end_date, check_interval_weeks=4,
             trade["conditions_met"] = result["conditions_met"]
             trade["parameter_set"] = parameter_set
             trades.append(trade)
-            db.insert_backtest_trade(trade)
             in_trade_until = trade["exit_date"] or end_date
+
+    db.insert_backtest_trades(trades)
 
     if skipped:
         print(f"{skipped} of {len(tickers)} tickers had no cached bars and were skipped")

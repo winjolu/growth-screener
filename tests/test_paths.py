@@ -11,6 +11,7 @@ Written-down conventions did not prevent it there. A failing test is the
 only thing that has.
 """
 import os
+import tempfile
 import unittest
 
 from screener import bar_cache, db, paths
@@ -52,15 +53,21 @@ class OverrideTest(unittest.TestCase):
                 os.environ[k] = v
 
     def test_the_directory_override_moves_everything(self):
-        os.environ["GROWTH_SCREENER_DATA_DIR"] = "/tmp/somewhere"
-        self.assertEqual(paths.data_file("screener.db"), "/tmp/somewhere/screener.db")
+        # Built rather than written literally: a quoted absolute path in a
+        # tracked file is what test_portability exists to reject, and an
+        # exemption here would blunt it for everything else too.
+        somewhere = os.path.join(tempfile.gettempdir(), "somewhere")
+        os.environ["GROWTH_SCREENER_DATA_DIR"] = somewhere
+        self.assertEqual(paths.data_file("screener.db"),
+                         os.path.join(somewhere, "screener.db"))
 
     def test_a_per_file_override_wins_over_the_directory(self):
-        os.environ["GROWTH_SCREENER_DATA_DIR"] = "/tmp/somewhere"
-        os.environ["GROWTH_SCREENER_DB"] = "/tmp/elsewhere/other.db"
+        somewhere = os.path.join(tempfile.gettempdir(), "somewhere")
+        elsewhere = os.path.join(tempfile.gettempdir(), "elsewhere", "other.db")
+        os.environ["GROWTH_SCREENER_DATA_DIR"] = somewhere
+        os.environ["GROWTH_SCREENER_DB"] = elsewhere
         self.assertEqual(
-            paths.data_file("screener.db", env="GROWTH_SCREENER_DB"),
-            "/tmp/elsewhere/other.db")
+            paths.data_file("screener.db", env="GROWTH_SCREENER_DB"), elsewhere)
 
     def test_a_tilde_in_an_override_is_expanded(self):
         os.environ["GROWTH_SCREENER_DATA_DIR"] = "~/somewhere"

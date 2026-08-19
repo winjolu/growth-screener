@@ -8,6 +8,7 @@ nothing obviously to do with the database.
 """
 import os
 import tempfile
+import sqlite3
 import unittest
 
 from screener import db
@@ -239,3 +240,82 @@ class SecurityIdentityCacheTest(_TempDB):
         conn.close()
         self.assertEqual(n, 1)
         self.assertEqual(db.get_cached_identity("GM")["company_name"], "GENERAL MOTORS CO")
+
+
+class BatchedTradeWriteTest(_TempDB):
+    """An arm's trades go in as one transaction.
+
+    Per-trade commits cost a full fsync each, and left a half-written arm
+    in the table looking exactly like a finished one. Misreading a partial
+    arm as complete has happened four times in this project's history, so
+    all-or-nothing is the safer shape as well as the faster one.
+    """
+
+    def _trade(self, **overrides):
+        base = {
+            "ticker": "AAA", "as_of_date": "2025-01-06", "entry_date": "2025-01-06",
+            "entry_price": 100.0, "exit_date": "2025-03-01", "exit_price": 110.0,
+            "exit_reason": "target", "return_pct": 10.0, "r_multiple": 1.5,
+            "conditions_met": 8, "parameter_set": "baseline", "still_open": False,
+        }
+        base.update(overrides)
+        return base
+
+    def test_a_batch_writes_every_row(self):
+        db.insert_backtest_trades([
+            self._trade(ticker="AAA"), self._trade(ticker="BBB"),
+            self._trade(ticker="CCC")])
+        self.assertEqual(len(db.get_backtest_trades()), 3)
+
+    def test_an_empty_batch_is_a_no_op(self):
+        self.assertEqual(db.insert_backtest_trades([]), 0)
+        self.assertEqual(db.get_backtest_trades(), [])
+
+    def test_a_rerun_replaces_rather_than_appends(self):
+        """The duplicate-sample defect, at batch scale.
+
+        Re-running a parameter set over the same window must not append a
+        second copy of every trade: the report aggregates whatever rows
+        exist, so the sample would silently double and win rate,
+        expectancy and trade count would all be computed off duplicates
+        that look like independent observations.
+        """
+        batch = [self._trade(ticker="AAA"), self._trade(ticker="BBB")]
+        db.insert_backtest_trades(batch)
+        db.insert_backtest_trades(batch)
+        self.assertEqual(len(db.get_backtest_trades()), 2)
+
+    def test_a_duplicate_key_inside_one_batch_keeps_the_last(self):
+        """Sequential inserts let a later trade replace an earlier one on
+        the same key. Issuing every DELETE and then every INSERT would
+        keep both instead, which is a silent behaviour change of exactly
+        the kind that doubles a sample."""
+        db.insert_backtest_trades([
+            self._trade(return_pct=10.0), self._trade(return_pct=99.0)])
+        rows = db.get_backtest_trades()
+        self.assertEqual(len(rows), 1)
+        self.assertAlmostEqual(rows[0]["return_pct"], 99.0)
+
+    def test_a_batch_of_mixed_shapes_writes_each_with_its_own_columns(self):
+        full = self._trade(ticker="AAA")
+        sparse = {"ticker": "BBB", "as_of_date": "2025-01-06",
+                  "entry_date": "2025-01-06", "parameter_set": "baseline"}
+        db.insert_backtest_trades([full, sparse])
+        rows = {r["ticker"]: r for r in db.get_backtest_trades()}
+        self.assertAlmostEqual(rows["AAA"]["return_pct"], 10.0)
+        self.assertIsNone(rows["BBB"]["return_pct"])
+
+    def test_a_failure_partway_writes_nothing(self):
+        """The point of one transaction: a run that dies mid-arm leaves no
+        rows rather than a plausible subset. A NOT NULL violation on the
+        third row must take the first two with it."""
+        good = [self._trade(ticker="AAA"), self._trade(ticker="BBB")]
+        bad = self._trade(ticker=None)          # ticker is NOT NULL
+        with self.assertRaises(sqlite3.IntegrityError):
+            db.insert_backtest_trades(good + [bad])
+        self.assertEqual(db.get_backtest_trades(), [],
+                         "a partial arm must not survive the failure")
+
+    def test_the_singular_helper_still_works(self):
+        db.insert_backtest_trade(self._trade())
+        self.assertEqual(len(db.get_backtest_trades()), 1)

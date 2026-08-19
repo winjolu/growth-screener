@@ -710,35 +710,82 @@ def cache_universe(instruments, security_types=None):
 
 
 def insert_backtest_trade(trade):
-    """I insert one simulated trade from backtest.py. Unknown keys in
-    `trade` beyond BACKTEST_TRADE_COLUMNS are ignored, same filtering
-    approach as insert_result.
+    """One simulated trade. Thin wrapper over the batch form.
 
-    One row per ticker per entry date per parameter set. Without that,
-    re-running a parameter set over the same window appended a second
-    copy of every trade, and since the report just aggregates whatever
-    rows exist, the sample silently doubled — win rate, expectancy and
-    trade count all computed off duplicates that look like independent
-    observations. That matters more here than almost anywhere else in
-    the project, because these are the numbers I use to decide whether a
-    parameter is worth keeping.
+    Kept because a single insert is the natural thing to write in a test,
+    and because the daily paths that record one trade at a time have no
+    arm to batch around.
     """
+    return insert_backtest_trades([trade])
+
+
+def insert_backtest_trades(trades):
+    """Write an arm's trades in a single transaction.
+
+    One commit per trade was costing more than time. The database used to
+    sit in a synced folder, so every commit was an invitation for the sync
+    client to upload the file mid-write; that is gone now, but a sweep
+    still paid a full fsync per trade, and a crash partway through left a
+    half-written arm in the table looking exactly like a finished one.
+    Reading a partial arm as complete has happened four times in this
+    project's history and is the expensive failure, not the slow one.
+
+    All of an arm or none of it. `with conn` commits on success and rolls
+    back on any exception, so a run that dies mid-arm leaves no rows
+    rather than a plausible subset.
+
+    Unknown keys beyond BACKTEST_TRADE_COLUMNS are ignored, same
+    filtering as insert_result.
+    """
+    trades = list(trades)
+    if not trades:
+        return 0
+
+    # One row per ticker per entry date per parameter set. Re-running a
+    # parameter set over the same window used to append a second copy of
+    # every trade, and since the report aggregates whatever rows exist,
+    # the sample silently doubled — win rate, expectancy and trade count
+    # all computed off duplicates that look like independent
+    # observations.
+    #
+    # Deduplicating within the batch matters for the same reason. A
+    # sequence of single inserts let a later trade replace an earlier one
+    # with the same key; issuing every DELETE and then every INSERT would
+    # instead keep both. Last one wins, as before.
+    keyed, order = {}, []
+    for trade in trades:
+        key = (trade.get("ticker"), trade.get("entry_date"),
+               trade.get("parameter_set"))
+        if key not in keyed:
+            order.append(key)
+        keyed[key] = trade
+
+    # Grouped by which columns are present, so a batch mixing trade
+    # shapes still writes each row with exactly the columns it has —
+    # equivalent today, since no column carries a DEFAULT, and still
+    # correct if one ever does.
+    groups = {}
+    for key in order:
+        trade = keyed[key]
+        columns = tuple(c for c in BACKTEST_TRADE_COLUMNS if c in trade)
+        groups.setdefault(columns, []).append(trade)
+
     conn = _connect()
     try:
-        conn.execute(
-            "DELETE FROM backtest_trades WHERE ticker = ? AND entry_date = ? "
-            "AND parameter_set IS ?",
-            (trade.get("ticker"), trade.get("entry_date"), trade.get("parameter_set")),
-        )
-        columns = [c for c in BACKTEST_TRADE_COLUMNS if c in trade]
-        placeholders = ", ".join("?" for _ in columns)
-        conn.execute(
-            f"INSERT INTO backtest_trades ({', '.join(columns)}) VALUES ({placeholders})",
-            [trade[c] for c in columns],
-        )
-        conn.commit()
+        with conn:
+            conn.executemany(
+                "DELETE FROM backtest_trades WHERE ticker = ? AND entry_date = ? "
+                "AND parameter_set IS ?",
+                order)
+            for columns, rows in groups.items():
+                placeholders = ", ".join("?" for _ in columns)
+                conn.executemany(
+                    f"INSERT INTO backtest_trades ({', '.join(columns)}) "
+                    f"VALUES ({placeholders})",
+                    [[row[c] for c in columns] for row in rows])
     finally:
         conn.close()
+    return len(order)
 
 
 def get_backtest_trades(parameter_set=None):
