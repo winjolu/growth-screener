@@ -23,11 +23,12 @@ import os
 import pickle
 import time
 
-from . import data_fetch, universe
+from . import data_fetch, paths, universe
 
-CACHE_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "weekly_bars.pkl"
-)
+# Out of the checkout: this is a large file rewritten during runs, and
+# the checkout is in a synced folder. Override with
+# GROWTH_SCREENER_BAR_CACHE.
+CACHE_PATH = paths.data_file("weekly_bars.pkl", env="GROWTH_SCREENER_BAR_CACHE")
 
 # The server's ceiling, and about 23 years of weekly bars — as far back
 # as any backtest here can reach. See docs/webull-api-reference.md.

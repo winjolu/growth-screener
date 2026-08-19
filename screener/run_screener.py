@@ -1,5 +1,5 @@
 """Entry point: runs the Weinstein stage-analysis screener across the
-watchlist and writes results to data/screener.db.
+watchlist and writes results to the local results database.
 
 I add the project root to sys.path so this works whether it's invoked as
 `python -m screener.run_screener` or run directly as a script.

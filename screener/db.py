@@ -1,16 +1,22 @@
 """SQLite storage for screener run results and the ticker watchlist.
 
-I keep the database at data/screener.db, which is already gitignored via
-data/* — nothing here ever needs to touch git.
+The database lives under the user data directory rather than in the
+checkout — see screener/paths.py. It used to sit at data/screener.db,
+inside a synced Drive folder, which is a bad place for a file taking one
+write transaction per trade. Override with GROWTH_SCREENER_DB.
+
+This is results, and it is per-project. Both projects write to
+backtest_trades keyed on parameter_set, so a shared file would let arms
+collide silently.
 """
 import datetime
 import json
 import os
 import sqlite3
 
-DB_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "screener.db"
-)
+from . import paths
+
+DB_PATH = paths.data_file("screener.db", env="GROWTH_SCREENER_DB")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS screener_results (
