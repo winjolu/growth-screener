@@ -40,6 +40,28 @@ class WriteLocationTest(unittest.TestCase):
         self.assertFalse(paths.inside_checkout(repo + "-scratch/file.db"))
 
 
+class TestIsolationTest(unittest.TestCase):
+    """The suite must not write to the real results database.
+
+    tests/test_backtest.py calls run_backtest without redirecting
+    DB_PATH, so every run was writing fake arms — parameter_set
+    "test_shortrunner" and friends — into the live table that the report
+    tooling aggregates. tests/__init__.py redirects the whole session;
+    this is what notices if that ever stops happening.
+    """
+
+    def test_the_results_database_is_a_sandbox_during_tests(self):
+        self.assertNotEqual(
+            db.DB_PATH, paths.data_file("screener.db", env="GROWTH_SCREENER_DB"),
+            "tests are pointed at the real results database")
+
+    def test_the_sandbox_is_a_temporary_directory(self):
+        import tempfile
+        self.assertTrue(
+            db.DB_PATH.startswith(tempfile.gettempdir()),
+            f"test database is not in a temporary directory: {db.DB_PATH}")
+
+
 class OverrideTest(unittest.TestCase):
     def setUp(self):
         self._saved = {k: os.environ.get(k) for k in
