@@ -1,30 +1,12 @@
-"""Standard moving averages — nothing proprietary, just the textbook math."""
+"""Re-exported from the shared package; implemented in market_core.moving_averages.
 
+Rebinds the module rather than re-exporting its names. A star import
+copies each name into a fresh namespace, so anything patching
+screener.moving_averages in a test would leave real callers bound to the
+original — the failure that surfaced as an unexplained HTTP 403.
+"""
+import sys
 
-def sma(values, period):
-    """Simple moving average. Same-length output list, None during warm-up."""
-    result = [None] * len(values)
-    window_sum = 0.0
-    for i, v in enumerate(values):
-        window_sum += v
-        if i >= period:
-            window_sum -= values[i - period]
-        if i >= period - 1:
-            result[i] = window_sum / period
-    return result
+from market_core import moving_averages as _shared
 
-
-def wma(values, period):
-    """Linearly weighted moving average: the most recent bar in the window
-    gets weight `period`, the oldest bar in the window gets weight 1.
-    Same-length output list, None during warm-up.
-    """
-    result = [None] * len(values)
-    weight_sum = period * (period + 1) / 2
-    for i in range(len(values)):
-        if i < period - 1:
-            continue
-        window = values[i - period + 1:i + 1]
-        weighted = sum(v * (position + 1) for position, v in enumerate(window))
-        result[i] = weighted / weight_sum
-    return result
+sys.modules[__name__] = _shared
