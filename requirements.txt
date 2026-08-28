@@ -1,2 +1,13 @@
 webull-openapi-python-sdk
 python-dotenv
+
+# Scientific stack, matching the sibling project. The shared package's
+# statistical modules import these, so a venv without them fails at test
+# collection rather than at the call site.
+numpy
+pandas
+scipy
+statsmodels
+scikit-learn
+matplotlib
+seaborn
